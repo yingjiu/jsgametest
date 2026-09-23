@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>丛林弓箭对决</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0B1A0F; overflow: hidden; }
+  #c {
+    position: fixed; inset: 0; width: 100%; height: 100%; display: block;
+    touch-action: none;            /* 交给游戏自己处理手势，别让浏览器抢走 */
+    -webkit-user-select: none; user-select: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<!-- 平台会在页面加载后注入 dual-arena-sdk.js 并自动 boot()，这里只负责按顺序加载游戏脚本 -->
+<script src="bow.js"></script>
+<script src="animals.js"></script>
+<script src="scene.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

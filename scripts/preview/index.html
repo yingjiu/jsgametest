@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>双屏竞技场 · 桌面预览（打桩 Arena 桥）</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #05070f; overflow: hidden;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
+    touch-action: none; -webkit-user-select: none; user-select: none; }
+  .box { position: fixed; color: #cfe9ff; font-size: 13px; line-height: 1.6;
+    background: rgba(8,14,26,.62); padding: 8px 12px; border-radius: 10px; pointer-events: none; }
+  #hud  { left: 12px; top: 12px; }
+  #tip  { left: 12px; bottom: 12px; }
+  #fps  { right: 12px; top: 12px; color: #9f9; font-size: 12px; }
+  #err  { right: 12px; top: 44px; color: #FFD54F; max-width: 46vw; white-space: pre-wrap;
+    background: rgba(48,12,12,.7); }
+  #log  { right: 12px; bottom: 12px; width: 46vw; max-height: 36vh; overflow: auto;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: #bcd;
+    background: rgba(0,0,0,.55); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud" class="box">hud: –</div>
+<div id="tip" class="box">桌面预览：房主权威模式，单机验证渲染 / 逻辑 / 手感（联机同步需两台真机）。</div>
+<div id="fps" class="box">frames: 0</div>
+<div id="err" class="box"></div>
+<div id="log" class="box"></div>
+
+<!--
+  ============================================================
+  使用说明（详见 ../../references/08-调试与自测.md）
+  1) 把本目录与你的游戏文件放在一起：把你的 game.js / 素材 拷到本目录，
+     或改下面 PREVIEW.scripts 指向相对路径（如 "../../mygame/game.js"）。
+  2) 用本地服务器打开（推荐，能自动读 manifest.json）：
+        cd scripts/preview && python -m http.server 8000
+        浏览器访问 http://localhost:8000/
+     （直接 file:// 打开也能跑，只是读不到 manifest.json，会退回 fallback 配置。）
+  3) 可加 URL 参数快速切换：?seat=1  &cross=1  &aspect=1.6  &seed=123
+     分屏(crossScreen=true)时切 seat=0/1 可看左右半场各自的画面。
+  ============================================================
+-->
+<script>
+var PREVIEW = {
+  title: "mygame",
+  scripts: ["game.js"],          // 你的游戏脚本（按顺序加载）
+  manifest: "manifest.json",     // 尝试读取；读不到时用 fallback
+  fallback: {
+    crossScreen: false,
+    apiVersion: 2,
+    caps: ["clock", "streams", "interp", "ev", "predict", "assets"],
+    options: {},                 // 如 { roundMs: "60000" }
+    assets: []
+  },
+  seat: 0,                       // 本机座位 0/1
+  aspect: 2.0,                   // 世界高度（y 上限）
+  seed: 1357
+};
+(function () {                 // URL 参数覆盖
+  var q = new URLSearchParams(location.search);
+  if (q.has("seat")) PREVIEW.seat = parseInt(q.get("seat"), 10) || 0;
+  if (q.has("aspect")) PREVIEW.aspect = parseFloat(q.get("aspect")) || PREVIEW.aspect;
+  if (q.has("seed")) PREVIEW.seed = parseInt(q.get("seed"), 10) || PREVIEW.seed;
+  if (q.has("cross")) PREVIEW.fallback.crossScreen = (q.get("cross") === "1");
+})();
+</script>
+
+<!-- 0) console / error 捕获：把诊断信息显示到页面上 -->
+<script>
+(function () {
+  var logEl = document.getElementById("log"), errEl = document.getElementById("err");
+  function push(t) {
+    if (!logEl) return;
+    var d = document.createElement("div");
+    d.textContent = t;
+    logEl.appendChild(d);
+    while (logEl.childNodes.length > 40) logEl.removeChild(logEl.firstChild);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  window.__pushLog = push;
+  function showErr(t) { if (errEl) errEl.textContent = String(t).slice(0, 300); }
+  var _log = console.log, _err = console.error;
+  console.log = function () { push("[log] " + Array.prototype.join.call(arguments, " ")); _log.apply(console, arguments); };
+  console.error = function () { push("[err] " + Array.prototype.join.call(arguments, " ")); showErr(Array.prototype.join.call(arguments, " ")); _err.apply(console, arguments); };
+  window.addEventListener("error", function (e) { push("[window.error] " + (e.message || e.error)); showErr(e.message || e.error); });
+  window.addEventListener("unhandledrejection", function (e) { push("[reject] " + e.reason); });
+})();
+</script>
+
+<!-- 1) 打桩 Arena 桥（必须在 SDK 之前定义） -->
+<script>
+(function () {
+  "use strict";
+  var cfg = { cross: PREVIEW.fallback.crossScreen, aspect: PREVIEW.aspect, seed: PREVIEW.seed, seat: PREVIEW.seat, cards: PREVIEW.fallback };
+  var started = true;               // 预览跳过倒计时，直接开跑
+  var queue = [];
+  var originX = 0;
+
+  function toWorld(px, py) {
+    var cv = document.getElementById("c");
+    var w = cv.clientWidth || window.innerWidth;
+    var h = cv.clientHeight || window.innerHeight;
+    return { x: (px / w) + originX, y: (py / h) * cfg.aspect };
+  }
+
+  var down = false;
+  function push(a, ev) {
+    var r = (ev.touches && ev.touches[0]) ? ev.touches[0] : ev;
+    var p = toWorld(r.clientX, r.clientY);
+    queue.push({ seat: cfg.seat, x: +p.x.toFixed(4), y: +p.y.toFixed(4), a: a, id: 0 });
+  }
+  function bindInput() {
+    var cv = document.getElementById("c");
+    function onDown(e) { down = true; push(0, e); e.preventDefault(); }
+    function onMove(e) { if (down) push(2, e); e.preventDefault(); }
+    function onUp(e) { if (down) push(1, e); down = false; e.preventDefault(); }
+    cv.addEventListener("mousedown", onDown);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    cv.addEventListener("touchstart", onDown, { passive: false });
+    cv.addEventListener("touchmove", onMove, { passive: false });
+    cv.addEventListener("touchend", onUp, { passive: false });
+  }
+
+  window.Arena = {
+    getInit: function () {
+      return JSON.stringify({
+        seat: cfg.seat,
+        role: "HOST",
+        authoritative: true,
+        crossScreen: cfg.cross,
+        originX: cfg.seat === 1 && cfg.cross ? 1 : 0,
+        visibleMin: cfg.seat === 1 && cfg.cross ? 1 : 0,
+        visibleMax: (cfg.seat === 1 && cfg.cross ? 1 : 0) + 1,
+        seamX: cfg.cross ? 1 : -1,
+        aspect: cfg.aspect,
+        seed: cfg.seed,
+        apiVersion: cfg.cards.apiVersion || 2,
+        caps: cfg.cards.caps || [],
+        options: cfg.cards.options || {},
+        assets: cfg.cards.assets || [],
+        players: [{ seat: 0, nick: "你" }, { seat: 1, nick: "对手" }]
+      });
+    },
+    isAuthoritative: function () { return true; },
+    isStarted: function () { return started; },
+    pollInputs: function () { var s = JSON.stringify(queue); queue = []; return s; },
+    pollRemoteState: function () { return ""; },        // 单机预览：无客人端
+    onReady: function () { console.log("[preview] Arena.onReady"); },
+    onState: function (j) { /* 单机不连网 */ },
+    onHud: function (h) {
+      var el = document.getElementById("hud");
+      if (!el) return;
+      el.innerHTML = "hud: " + (h && h.scores ? h.scores.join(" : ") : "–") +
+        (h && h.hp ? "  hp " + h.hp.map(function (v) { return (+v).toFixed(2); }).join("/") : "") +
+        (h && h.tip ? "<br><span style='color:#FFD54F'>" + h.tip + "</span>" : "");
+    },
+    onOver: function (j) { console.log("[preview] over " + j); window.__pushLog("[over] " + j); },
+    log: function (m) { console.log("[duizhan][GAME] " + m); }
+  };
+
+  // 读 manifest.json（http 下可用；失败就用 fallback）
+  window.__previewLoadManifest = function (done) {
+    var url = PREVIEW.manifest;
+    if (!url || typeof fetch !== "function") return done();
+    fetch(url, { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (m) {
+        if (m) {
+          cfg.cards = {
+            crossScreen: !!m.crossScreen,
+            apiVersion: m.apiVersion || 2,
+            caps: m.caps || [],
+            options: (function () { var o = {}, a = m.options || []; for (var i = 0; i < a.length; i++) o[a[i].key] = a[i].def; return o; })(),
+            assets: m.assets || []
+          };
+          cfg.cross = cfg.cards.crossScreen;
+          console.log("[preview] manifest loaded: " + (m.id || "?") + " v" + (m.version || "?") +
+            " cross=" + cfg.cross + " caps=[" + cfg.cards.caps.join(",") + "]");
+        }
+        done();
+      })
+      .catch(function () { console.log("[preview] manifest 读取失败，使用 fallback 配置"); done(); });
+  };
+  bindInput();
+})();
+</script>
+
+<!-- 2) 加载真实 SDK（本地副本），随后加载游戏脚本，最后 boot -->
+<script>
+(function () {
+  function load(srcs, done) {
+    var i = 0;
+    (function next() {
+      if (i >= srcs.length) return done();
+      var s = document.createElement("script");
+      s.src = srcs[i++];
+      s.onload = next;
+      s.onerror = function () { window.__pushLog("[load fail] " + s.src); next(); };
+      document.body.appendChild(s);
+    })();
+  }
+  function boot() {
+    if (window.DualArena && window.DualArena.boot) {
+      window.__pushLog("[preview] booting " + PREVIEW.title);
+      window.DualArena.boot();
+    } else {
+      document.getElementById("err").textContent = "DualArena 未定义：sdk/dual-arena-sdk.js 未加载成功";
+    }
+    var fc = 0;
+    (function loop() {
+      fc++;
+      var el = document.getElementById("fps");
+      if (el) el.textContent = "frames: " + fc;
+      requestAnimationFrame(loop);
+    })();
+  }
+  window.__previewLoadManifest(function () {
+    load(["dual-arena-sdk.js"].concat(PREVIEW.scripts), boot);
+  });
+})();
+</script>
+</body>
+</html>

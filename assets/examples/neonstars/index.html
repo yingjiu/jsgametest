@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>霓虹星星</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #05070f; overflow: hidden; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #hint {
+    position: fixed; left: 0; right: 0; bottom: 6%; text-align: center;
+    color: #cfe9ff; font: 600 15px/1.6 sans-serif; opacity: .9;
+    transition: opacity .6s; pointer-events: none; text-shadow: 0 0 10px #1b6;
+  }
+  #hint b { color: #ffd23f; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">抢星星得分 · <b>连续命中</b>叠连击倍率 · 金色 3 分 · 躲避炸弹 · 青色冰冻星是<b>陷阱</b>，点了会冻住自己</div>
+<script src="game.js"></script>
+<script>
+  // SDK 由平台在页面加载后注入并调用 DualArena.boot()，这里仅需保证游戏对象已注册。
+  setTimeout(function () {
+    var h = document.getElementById('hint');
+    if (h) h.style.opacity = 0;
+  }, 3200);
+</script>
+</body>
+</html>

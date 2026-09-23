@@ -1,0 +1,30 @@
+{
+  "id": "mygame",
+  "name": "我的游戏",
+  "subtitle": "一句话副标题（卡片上显示）",
+  "description": "较长的玩法介绍，用于详情页。\n可以用 \\n 分段。",
+  "version": 1,
+  "apiVersion": 2,
+  "caps": ["clock", "streams", "ev"],
+  "options": [
+    {
+      "key": "roundMs",
+      "type": "enum",
+      "label": "回合时长",
+      "def": "30000",
+      "choices": [
+        { "value": "30000", "label": "30 秒" },
+        { "value": "60000", "label": "60 秒" },
+        { "value": "90000", "label": "90 秒" }
+      ]
+    }
+  ],
+  "assets": [],
+  "minPlayers": 2,
+  "maxPlayers": 2,
+  "crossScreen": false,
+  "tags": ["反应", "对抗"],
+  "runtime": "web",
+  "entry": "index.html",
+  "cover": ""
+}

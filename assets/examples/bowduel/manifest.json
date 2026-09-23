@@ -1,0 +1,37 @@
+{
+  "id": "bowduel",
+  "name": "丛林弓箭对决",
+  "subtitle": "真分屏·抢动物·跨缝狙击对手，射死即胜",
+  "description": "两台手机各守半片丛林，中间那群动物会来回乱跑、自由穿越两屏。\n· 拖到哪射到哪：按住屏幕拉弓，拖动决定方向与力度，松手射出；实时弹道虚线让你看清这一箭落在哪。\n· 动物分值不同：野兔 2 分（1 箭）、山雀 3 分（会飞）、赤狐 5 分（2 箭）、梅花鹿 8 分（3 箭）、野猪 12 分（4 箭，会突然冲撞）。\n· 击杀者得分：致命一箭才算你的，非致命命中只有 1 分安慰 —— 残血的鹿跑到对面去，就会被对手抢走。\n· 跨缝狙击：对手在屏幕外的另一侧，射中他 +15 分并扣 1 血（满蓄力扣 2），把对手射死立刻获胜。\n· 回合时长由房主在创建房间页设置（60/90/120/180 秒）。",
+  "version": 2,
+  "apiVersion": 2,
+  "caps": ["clock", "streams", "interp", "ev", "predict", "assets"],
+  "minPlayers": 2,
+  "maxPlayers": 2,
+  "crossScreen": true,
+  "tags": ["对抗", "射击", "操作"],
+  "runtime": "web",
+  "entry": "index.html",
+  "cover": "cover.png",
+  "options": [
+    {
+      "key": "roundMs",
+      "type": "enum",
+      "label": "回合时长",
+      "def": "90000",
+      "choices": [
+        { "value": "60000", "label": "60 秒" },
+        { "value": "90000", "label": "90 秒" },
+        { "value": "120000", "label": "120 秒" },
+        { "value": "180000", "label": "180 秒" }
+      ]
+    }
+  ],
+  "assets": [
+    "animals/rabbit.png",
+    "animals/bird.png",
+    "animals/fox.png",
+    "animals/deer.png",
+    "animals/boar.png"
+  ]
+}

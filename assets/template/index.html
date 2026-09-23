@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>我的游戏</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #05070f; overflow: hidden; }
+  /* 画布必须铺满屏幕，SDK 会按 clientWidth/Height 与 DPR 设置分辨率 */
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- 只引用你自己的脚本；SDK 由平台自动注入，不要在这里引用 dual-arena-sdk.js -->
+<script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>双屏竞技场 · 多人网页自测台</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#05070f;color:#cfe9ff;
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;overflow:hidden}
+  #bar{display:flex;gap:12px;align-items:center;padding:8px 12px;background:#0a1322;border-bottom:1px solid #1b2a44;font-size:13px}
+  #bar select,#bar button{font-size:13px;padding:4px 8px;border-radius:8px;border:1px solid #2a3c5e;background:#0e1a30;color:#cfe9ff}
+  #hud{color:#9f9}
+  #status{color:#FFD54F;margin-left:auto}
+  #grid{position:fixed;inset:45px 0 0 0;display:grid;gap:2px;background:#000}
+  iframe{border:0;width:100%;height:100%;background:#05070f;display:block}
+</style>
+</head>
+<body>
+<div id="bar">
+  <b>多人网页自测台</b>
+  <label>人数 <select id="sel">
+    <option>2</option><option>3</option><option>4</option>
+    <option>6</option><option>8</option><option>12</option>
+  </select></label>
+  <label><input type="checkbox" id="cross" checked /> 分屏(cross)</label>
+  <button id="reload">重载</button>
+  <span id="hud">hud: –</span>
+  <span id="status"></span>
+</div>
+<div id="grid"></div>
+
+<script>
+var Q = new URLSearchParams(location.search);
+var PLAYERS = parseInt(Q.get('players') || '2', 10);
+var CROSS   = Q.get('cross') === '1';
+var SEED    = Q.get('seed') || '1357';
+var SCRIPTS = Q.get('scripts') || 'game.js';
+document.getElementById('sel').value = String(PLAYERS);
+document.getElementById('cross').checked = CROSS;
+
+// 父页面 = 迷你中继：汇总各座位输入转给房主(0)，并把房主快照转发给各客人
+var iframes = {};           // seat -> iframe.contentWindow
+var hostInputs = [];        // 房主应处理的全部输入
+var latestState = '';       // 房主最新快照
+var latestHud = '';
+
+window.addEventListener('message', function (e) {
+  var d = e.data; if (!d || !d.__arena) return;
+  if (d.type === 'input') {                       // 任一座位的上报输入 → 转给房主
+    for (var i = 0; i < d.data.length; i++) hostInputs.push(d.data[i]);
+  } else if (d.type === 'state' && d.seat === 0) {
+    latestState = d.data;                         // 仅房主广播
+  } else if (d.type === 'hud' && d.seat === 0) {
+    latestHud = d.data;
+    document.getElementById('hud').textContent = 'hud: ' + JSON.stringify(d.data);
+  } else if (d.type === 'over' && d.seat === 0) {
+    document.getElementById('status').textContent = '结束: ' + d.data;
+  } else if (d.type === 'ready') {
+    iframes[d.seat] = e.source;
+  }
+});
+
+// 每帧把「房主输入」推给房主、把「房主快照」推给各客人
+setInterval(function () {
+  for (var s in iframes) {
+    if (s == 0) iframes[s].postMessage({ __arena: 1, type: 'inputs', data: hostInputs }, '*');
+    else iframes[s].postMessage({ __arena: 1, type: 'remote', data: latestState }, '*');
+  }
+  hostInputs = [];
+}, 16);
+
+function build() {
+  var grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  // 网格布局：人数越多列数越多
+  var cols = PLAYERS <= 2 ? PLAYERS : (PLAYERS <= 4 ? 2 : (PLAYERS <= 9 ? 3 : 4));
+  grid.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
+  grid.style.gridTemplateRows = 'repeat(' + Math.ceil(PLAYERS / cols) + ', 1fr)';
+  for (var s = 0; s < PLAYERS; s++) {
+    var f = document.createElement('iframe');
+    f.src = 'seat.html?seat=' + s + '&players=' + PLAYERS +
+            '&cross=' + (CROSS ? '1' : '0') + '&seed=' + SEED +
+            '&scripts=' + encodeURIComponent(SCRIPTS);
+    grid.appendChild(f);
+  }
+}
+build();
+
+document.getElementById('reload').onclick = function () {
+  PLAYERS = parseInt(document.getElementById('sel').value, 10);
+  CROSS = document.getElementById('cross').checked;
+  var u = new URL(location.href);
+  u.searchParams.set('players', PLAYERS);
+  u.searchParams.set('cross', CROSS ? '1' : '0');
+  location.href = u.toString();
+};
+</script>
+</body>
+</html>

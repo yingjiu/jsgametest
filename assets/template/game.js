@@ -22,7 +22,9 @@
       this.ctx = ctx;
       this.roundMs = parseInt((ctx.options && ctx.options.roundMs) || DEFAULT_ROUND_MS, 10);
       this.t = this.roundMs;
-      this.score = [0, 0];
+      // 按实际人数初始化比分（支持 1 人单机 / 多人）：HUD 与结算都据此长度
+      this.score = [];
+      for (var i = 0; i < ctx.players.length; i++) this.score.push(0);
       this.fx = [];                                  // 纯视觉特效（不参与胜负）
       this._acc = 0;
       // 目标点初始位置：两端同种子 → 同一序列
@@ -140,20 +142,28 @@
 
     // ============== 原生 HUD（按座位索引！）==============
     hud: function () {
-      return { hp: [1, 1], scores: [this.score[0], this.score[1]], tip: "点击蓝点得分" };
+      // hp/scores 长度必须 = ctx.players.length（见自检清单 #30），按比分动态生成
+      var hp = [], sc = [];
+      for (var i = 0; i < this.score.length; i++) { hp.push(1); sc.push(this.score[i]); }
+      return { hp: hp, scores: sc, tip: "点击蓝点得分" };
     },
 
     // ============== 结算 ==============
     isFinished: function () { return this.t <= 0; },
 
     result: function () {
-      var w = this.score[0] > this.score[1] ? 0 : (this.score[1] > this.score[0] ? 1 : -1);
-      return {
-        winner: w,
-        scores: [this.score[0], this.score[1]],
-        summary: this.score[0] + " : " + this.score[1],
-        stats: [["座位 0 得分", String(this.score[0])], ["座位 1 得分", String(this.score[1])]]
-      };
+      // 按全部座位的比分算赢家（平局 = -1），长度对齐 ctx.players.length
+      var best = -1, bestScore = -1, tie = false;
+      for (var i = 0; i < this.score.length; i++) {
+        if (this.score[i] > bestScore) { bestScore = this.score[i]; best = i; tie = false; }
+        else if (this.score[i] === bestScore) { tie = true; }
+      }
+      var w = tie ? -1 : best;
+      var sc = this.score.slice();
+      var summary = sc.join(" : ");
+      var stats = [];
+      for (var k = 0; k < sc.length; k++) stats.push(["座位 " + k + " 得分", String(sc[k])]);
+      return { winner: w, scores: sc, summary: summary, stats: stats };
     }
   };
 

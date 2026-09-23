@@ -51,6 +51,17 @@ const ASPECT = parseFloat(opt("aspect", "2.0"));
 const SEED = parseInt(opt("seed", "1357"), 10);
 const FRAME_MS = 16.7;
 
+// 人数：默认取 manifest.maxPlayers（对齐 SDKv2 的 N 人模型），可用 --players 覆盖
+const MANIFEST_PLAYERS = (manifest && Number.isInteger(manifest.maxPlayers) && manifest.maxPlayers >= 1)
+  ? manifest.maxPlayers : 2;
+const PLAYERS = Math.max(1, parseInt(opt("players", String(MANIFEST_PLAYERS)), 10) || MANIFEST_PLAYERS);
+function buildPlayers(n) {
+  const out = [];
+  for (let i = 0; i < n; i++) out.push({ seat: i, nick: i === 0 ? "你" : ("P" + (i + 1)) });
+  return out;
+}
+const ORIENTATION = (manifest && manifest.orientation) ? String(manifest.orientation).toLowerCase() : "portrait";
+
 // ---------- 虚拟时钟 + rAF ----------
 let vnow = 0;
 let rafQueue = [];
@@ -138,7 +149,7 @@ const sandbox = {
       apiVersion: 2, caps: CAPS,
       options: { roundMs: ROUND_MS },
       assets: [],
-      players: [{ seat: 0, nick: "你" }, { seat: 1, nick: "对手" }],
+      players: buildPlayers(PLAYERS),
     }),
     isAuthoritative: () => true,
     isStarted: () => true,
@@ -199,11 +210,16 @@ function check(name, ok, detail) {
 console.log("== 冒烟测试 ==");
 console.log("  game = " + path.relative(here, gamePath));
 console.log("  caps = [" + CAPS.join(",") + "]  cross=" + (CROSS ? 1 : 0) + "  roundMs=" + ROUND_MS);
+console.log("  players = " + PLAYERS + "  orientation = " + ORIENTATION);
 console.log("  scripts(自动发现) = " + discoverScripts(gamePath).map((p) => path.relative(here, p)).join(", "));
 
 run(sdkPath);
 const gameScripts = discoverScripts(gamePath);
 gameScripts.forEach(run);
+
+// manifest 字段校验 + 铁律静态扫描（不依赖浏览器，提前暴露致命问题）
+validateManifest(manifest);
+scanForbidden(gameScripts);
 
 const G = sandbox.window.__DUAL_GAME__;
 check("游戏对象已注册 (window.__DUAL_GAME__)", !!G);
@@ -224,8 +240,9 @@ drainFrames(5);
 check("已回传 HUD (Arena.onHud)", has("hud"));
 check("房主已回传状态 (Arena.onState)", has("state"));
 const hud0 = last("hud");
-check("HUD 结构合法 (hp/scores 长度 2)",
-  hud0 && Array.isArray(hud0.hp) && hud0.hp.length === 2 && Array.isArray(hud0.scores) && hud0.scores.length === 2);
+check("HUD 结构合法 (hp/scores 长度 = players=" + PLAYERS + ")",
+  hud0 && Array.isArray(hud0.hp) && hud0.hp.length === PLAYERS && Array.isArray(hud0.scores) && hud0.scores.length === PLAYERS,
+  "hp=" + (hud0 && hud0.hp ? hud0.hp.length : "?") + " scores=" + (hud0 && hud0.scores ? hud0.scores.length : "?"));
 
 // 模拟输入：尽量点中一个实体（a=0），再喂一个 MOVE（a=2），确保输入链路不炸
 const target = guessTarget(G);
@@ -235,7 +252,7 @@ inputQueue.push({ seat: 1, x: 0.5, y: ASPECT / 2, a: 2, id: 0 });
 drainFrames(4);
 const h = last("hud");
 check("注入输入后无异常且 HUD 合法",
-  !hasErr() && h && Array.isArray(h.scores) && h.scores.length === 2,
+  !hasErr() && h && Array.isArray(h.scores) && h.scores.length === PLAYERS,
   "target=" + (target ? "有" : "无") + "  scores=" + (h ? JSON.stringify(h.scores) : "?") +
   (before && h ? "  delta=" + (h.scores[0] - before.scores[0]) : ""));
 
@@ -278,4 +295,66 @@ function guessTarget(g) {
   if (Array.isArray(g.stars) && g.stars[0]) return g.stars[0];
   if (Array.isArray(g.ents) && g.ents[0]) return g.ents[0];
   return null;
+}
+
+// ============ manifest 字段校验 ============
+function validateManifest(m) {
+  if (!m) {
+    warn("未找到 manifest.json（无法校验 apiVersion/人数/方向），建议放一份同级 manifest");
+    return;
+  }
+  const a = m.apiVersion;
+  if (typeof a !== "number" || a < 1 || a > 2) {
+    check("manifest.apiVersion ∈ 1..2", false, "apiVersion=" + a);
+  } else {
+    check("manifest.apiVersion ∈ 1..2", true, "v" + a);
+  }
+  const mn = Number(m.minPlayers), mx = Number(m.maxPlayers);
+  if (!(mn >= 1 && mx <= 12 && mn <= mx)) {
+    check("manifest 人数 min/max ∈ 1..12 且 min≤max", false, mn + ".." + mx);
+  } else {
+    check("manifest 人数 min/max ∈ 1..12 且 min≤max", true, mn + ".." + mx);
+  }
+  const or = (m.orientation || "portrait").toLowerCase();
+  if (!["portrait", "landscape", "sensor", "auto", "both"].includes(or)) {
+    warn("manifest.orientation 非法，运行时回落竖屏", or);
+  } else {
+    check("manifest.orientation 合法", true, or);
+  }
+}
+
+// 先剥离注释再扫，避免教学文案（如模板里"绝不用 Date.now()"）被误判为违规
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")            // 块注释
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");        // 行注释（保留 http:// 这类 scheme）
+}
+
+// ============ 三条铁律静态扫描 ============
+// 逻辑随机/计时必须走 ctx.rng() 与 tick(dt)，用 Math.random/Date.now/performance.now
+// 参与逻辑会在多端产生不一致。此处做静态扫描，提前在冒烟阶段暴露（不致命，仅告警）。
+function scanForbidden(scripts) {
+  const pats = [
+    { re: /\bMath\.random\s*\(/, msg: "Math.random() —— 逻辑随机必须用 ctx.rng()" },
+    { re: /\bDate\.now\s*\(/, msg: "Date.now() —— 逻辑计时必须用 tick(dt) 的 dt" },
+    { re: /\bperformance\.now\s*\(/, msg: "performance.now() —— 逻辑计时必须用 tick(dt) 的 dt" },
+  ];
+  const hits = [];
+  for (const f of scripts) {
+    let src;
+    try { src = fs.readFileSync(f, "utf8"); } catch (e) { continue; }
+    src = stripComments(src);
+    for (const p of pats) {
+      if (p.re.test(src)) hits.push({ f: path.relative(here, f), msg: p.msg });
+    }
+  }
+  if (hits.length === 0) {
+    check("铁律静态扫描：无 Math.random/Date.now/performance.now", true);
+  } else {
+    for (const h of hits) warn("疑似违反铁律: " + h.msg, h.f);
+  }
+}
+
+function warn(name, detail) {
+  console.log("  ⚠ " + name + (detail ? "  (" + detail + ")" : ""));
 }

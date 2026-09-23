@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>seat</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#05070f;overflow:hidden;
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  #c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;-webkit-user-select:none;user-select:none}
+  #tag{position:fixed;left:8px;top:8px;color:#cfe9ff;font-size:12px;background:rgba(8,14,26,.6);padding:4px 8px;border-radius:8px;pointer-events:none}
+  #hud{position:fixed;left:8px;bottom:8px;color:#cfe9ff;font-size:12px;background:rgba(8,14,26,.6);padding:4px 8px;border-radius:8px;pointer-events:none;white-space:pre-wrap}
+  #err{position:fixed;right:8px;top:8px;color:#FFD54F;font-size:11px;max-width:40vw;white-space:pre-wrap;background:rgba(48,12,12,.6);padding:4px 8px;border-radius:8px;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="tag">seat ?</div>
+<div id="hud">hud: –</div>
+<div id="err"></div>
+<script>
+var Q = new URLSearchParams(location.search);
+var SEAT    = parseInt(Q.get('seat')   || '0', 10);
+var PLAYERS = parseInt(Q.get('players')|| '2', 10);
+var CROSS   = Q.get('cross') === '1';
+var ASPECT  = parseFloat(Q.get('aspect') || '2') || 2;
+var SEED    = parseInt(Q.get('seed')   || '1357', 10);
+var SCRIPTS = (Q.get('scripts') || 'game.js').split(',').filter(Boolean);
+document.getElementById('tag').textContent = 'seat ' + SEAT + ' / ' + PLAYERS + (CROSS ? ' · 分屏' : ' · 镜像');
+
+// ---- 与父页面（迷你中继）通信 ----
+var pendingInputs = [];   // 父页面推来的、房主应处理的全部输入
+var pendingRemote = '';   // 父页面推来的房主快照（客人用）
+function post(d) { d.__arena = 1; parent.postMessage(d, '*'); }
+window.addEventListener('message', function (e) {
+  var d = e.data; if (!d || !d.__arena) return;
+  if (d.type === 'inputs') pendingInputs = d.data || [];
+  else if (d.type === 'remote') pendingRemote = d.data || '';
+});
+
+// ---- console / error 捕获 ----
+(function () {
+  var errEl = document.getElementById('err');
+  var _log = console.log, _err = console.error;
+  console.log = function () { try { _log.apply(console, arguments); } catch (x) {} };
+  console.error = function () { try { errEl.textContent = Array.prototype.join.call(arguments, ' ').slice(0, 200); _err.apply(console, arguments); } catch (x) {} };
+  window.addEventListener('error', function (e) { errEl.textContent = String(e.message || e.error).slice(0, 200); });
+})();
+
+// ---- 本地触摸/鼠标 → 世界坐标 → 发给父页面（父页面汇总后转给房主）----
+function toWorld(px, py) {
+  var cv = document.getElementById('c');
+  var w = cv.clientWidth || window.innerWidth, h = cv.clientHeight || window.innerHeight;
+  return { x: (px / w) + (CROSS ? SEAT : 0), y: (py / h) * ASPECT };
+}
+var down = false;
+function emit(a, ev) {
+  var r = (ev.touches && ev.touches[0]) ? ev.touches[0] : ev;
+  var p = toWorld(r.clientX, r.clientY);
+  post({ type: 'input', seat: SEAT, data: [{ seat: SEAT, x: +p.x.toFixed(4), y: +p.y.toFixed(4), a: a, id: 0 }] });
+}
+(function bind() {
+  var cv = document.getElementById('c');
+  cv.addEventListener('mousedown', function (e) { down = true; emit(0, e); });
+  window.addEventListener('mousemove', function (e) { if (down) emit(2, e); });
+  window.addEventListener('mouseup', function (e) { if (down) { down = false; emit(1, e); } });
+  cv.addEventListener('touchstart', function (e) { down = true; emit(0, e); e.preventDefault(); }, { passive: false });
+  cv.addEventListener('touchmove', function (e) { if (down) emit(2, e); e.preventDefault(); }, { passive: false });
+  cv.addEventListener('touchend', function (e) { down = false; emit(1, e); e.preventDefault(); }, { passive: false });
+})();
+
+// ---- 打桩 Arena 桥：本 iframe = 一个「设备」座位，状态经父页面在座位间转发 ----
+window.Arena = {
+  getInit: function () {
+    var players = [];
+    for (var i = 0; i < PLAYERS; i++) players.push({ seat: i, nick: 'P' + i });
+    return JSON.stringify({
+      seat: SEAT,
+      role: SEAT === 0 ? 'HOST' : 'GUEST',
+      authoritative: SEAT === 0,
+      crossScreen: CROSS,
+      originX: CROSS ? SEAT : 0,
+      visibleMin: CROSS ? SEAT : 0,
+      visibleMax: CROSS ? SEAT + 1 : 1,
+      seamX: CROSS ? SEAT + 1 : -1,
+      aspect: ASPECT,
+      seed: SEED,
+      apiVersion: 2,
+      caps: ['clock', 'streams', 'interp', 'ev', 'predict', 'assets'],
+      options: {},
+      assets: [],
+      players: players,
+      worldWidth: PLAYERS
+    });
+  },
+  isAuthoritative: function () { return SEAT === 0; },
+  isStarted: function () { return true; },                     // 预览跳过倒计时，直接开跑
+  pollInputs: function () { var s = JSON.stringify(pendingInputs); pendingInputs = []; return s; },
+  pollRemoteState: function () { var s = pendingRemote; pendingRemote = ''; return s; },
+  onReady: function () { post({ type: 'ready', seat: SEAT }); },
+  onState: function (j) { if (SEAT === 0) post({ type: 'state', seat: 0, data: j }); },  // 仅房主广播
+  onHud: function (h) {
+    var el = document.getElementById('hud');
+    if (el) el.textContent = 'hud: ' + (h && h.scores ? h.scores.join(' : ') : '–') +
+      (h && h.hp ? '  hp ' + h.hp.map(function (v) { return (+v).toFixed(2); }).join('/') : '') +
+      (h && h.tip ? '\n' + h.tip : '');
+  },
+  onOver: function (j) { post({ type: 'over', seat: SEAT, data: j }); },
+  log: function (m) { /* 父页面统一收集日志 */ }
+};
+
+// ---- 加载真实 SDK + 游戏脚本，最后 boot ----
+(function () {
+  function load(srcs, done) {
+    var i = 0;
+    (function next() {
+      if (i >= srcs.length) return done();
+      var s = document.createElement('script');
+      s.src = srcs[i++]; s.onload = next;
+      s.onerror = function () { errEl.textContent = 'load fail: ' + s.src; next(); };
+      document.body.appendChild(s);
+    })();
+  }
+  load(['dual-arena-sdk.js'].concat(SCRIPTS), function () {
+    if (window.DualArena && window.DualArena.boot) window.DualArena.boot();
+    else document.getElementById('err').textContent = 'DualArena 未定义：dual-arena-sdk.js 未加载';
+  });
+})();
+</script>
+</body>
+</html>
